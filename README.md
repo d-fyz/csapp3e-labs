@@ -1,7 +1,7 @@
 ### My progress for labs of CS:APP3e
 
 - [x] Data lab
-- [ ] Bomb lab
+- [x] Bomb lab
 - [ ] Attack lab
 - [ ] Architecture Lab   
 - [ ] Cache lab

@@ -1,0 +1,115 @@
+First need to examine disassembled code of bomb.
+Use objdump -D bomb > bomb.s
+Reviewing assembly code together with debugging with GDB we got answers.
+
+1."Border relations with Canada have never been better."
+
+Function phase_1. It stores pointer to template string $0x402400 in %rsi as second 
+argument (the first argument which is pointer to string that we get from stdin is already in %rdi)
+and call strings_not_equal(). It compares the lengths of the strings and if they equal compares every char.
+So we need string starting from $0x402400. 
+GDB command x/s 0x402400 or print (char *) 0x402400 gives answer.
+
+2. "1 2 4 8 16 32"
+
+Function phase_2. It allocates 40 bytes on stack and expects that after calling read_six_numbers() there are six 
+int values are on stack at addresses from (%rsp) to 20(%rsp). Then it checks if first number equals 1 and every next number 
+is 2 times larger. 
+Function read_six_numbes() calls sscanf(). It gets pointer to our string as 1st arg in %rdi, pointer to format string as 2d
+arg (With gdb command x/s 0x4025c3 we get "%d %d %d %d %d %d"), and 6 pointers to where it should store values. 4 of them are 
+in registers (%rdx, %rcx, %r8, %r9) and 2 on stack according to convention.
+
+3. "0 207"
+   "1 311"
+   "3 256"
+   "4 389"
+   "5 206"
+   "6 682"
+   "7 327"
+
+Function phase_3. It calls sscanf() and pass to it a pointer to format string which is $0x4025cf.
+GDB command x/s 0x4025cf gives "%d %d". It store pointers to them at %rdx and %rcx as 3 and 4 args of sscanf().
+After calling sscanf() it first check if first number is not greater 7. MoveThen the key instruction is executed
+jmpq *0x402470(,%rax,8). So the address where it jumps is in memory at adress 0x402470 + 1st number from input * 8. 
+GDB command x/8ga 0x402470 gives addresses to jump to depending on value of first number. 
+
+0x402470:	0x400f7c <phase_3+57>	0x400fb9 <phase_3+118>
+0x402480:	0x400f83 <phase_3+64>	0x400f8a <phase_3+71>
+0x402490:	0x400f91 <phase_3+78>	0x400f98 <phase_3+85>
+0x4024a0:	0x400f9f <phase_3+92>	0x400fa6 <phase_3+99>
+
+Examining code at those addresses we get constants for second number.
+
+4. "0 0"
+   "1 0"
+   "3 0"
+   "7 0" 
+
+Function phase_4. The format string is the same as in phase_3() ("%d %d").
+Then it tests if first number <= 14 and second number = 0. It calls func4(number1, 0, 14) which should return 0
+if the numbers are correct. We can run that function for values from 0 to 14 and see that it returns 0 for 4 cases (0, 1, 3, 7)
+func4() translated to C looks like:
+
+int func4(int n, int c, int m) {
+    unsigned p = m - c;
+    int v = (int)(p + (p >> 31)) >> 1;
+    int h = v + c;
+    int result = 0;
+    
+    if (h <= n) {            
+        if (h >= n) {
+            result = 0;
+        } else {
+            c = h + 1;
+            result = func4(n, c, m);
+            result = result + result + 1;
+        }
+    } else {
+        m = h - 1;
+        result = func4(n, c, m);
+        result += result;
+    }
+    return result;
+}
+
+5. ")/.%&'"
+   "9?>567"
+   "IONEFG"
+   "Y_^UVW"
+   "ionefg"
+
+Function phase_5. It first checks if input string is of length 6.
+Then for each char it calculates its modulo 16, uses that value as offset in a special string to get
+final char and stores it on stack starting from address *((rsp + 16)). The special string is at
+address 0x4024b0.
+GDB command print -elements 16 -- (char*) 0x4024b0 gives first 16 chars of that string "maduiersnfotvbyl".
+
+Then it compares generated string with template which is at address 0x40245e (stored in %rsi before calling strings_not_equal())
+GDB command x/s 0x40245e gives "flyers". That gives us a formula for our input string:
+
+input_str[i] = "maduiersnfotvbyl".indexOf("flyers"[i]) + 16*n where n is in range 2 - 6
+
+6. "4 3 2 1 6 5"
+
+Function phase_6. It check if input is 6 numbers, every number < 7 and all are different.
+Then it calculates a compliment to 7 for every number.
+There is a table started from address 0x603320 with template data which is used by program to determine correct
+sequence of numbers;
+
+The GDB command x/24wd 0x6032d0 gives
+
+Address             Value   (7-input number)    Next address      Empty
+-----------------------------------------------------------------------
+0x6032d0 <node1>:	332         1                0x006032e0	          0
+0x6032e0 <node2>:	168	        2	             0x006032f0     	  0
+0x6032f0 <node3>:	924	        3	             0x00603300	          0
+0x603300 <node4>:	691	        4	             0x00603310	          0
+0x603310 <node5>:	477	        5	             0x00603320	          0
+0x603320 <node6>:	443	        6	             0x00000000	          0
+
+The last part of code reads Values from that table and check if every next one is not greater the previous one.
+The values order should be 924, 691, 477, 443, 332, 168 and corresponging 7s complement 3, 4, 5, 6, 1, 2.
+So, original input sequence should be 4, 3, 2, 1, 6, 5
+
+-----------------------------------------
+Congratulations! You've defused the bomb!
